@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(docker inspect:*)",
+      "Bash(/c/Users/HP/AppData/Roaming/Python/Scripts/poetry run alembic upgrade head)"
+    ]
+  }
+}
