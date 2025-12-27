@@ -33,7 +33,21 @@ class CaseResponse(BaseModel):
 
 
 class DocumentResponse(BaseModel):
-    """Schema for document response"""
+    """Schema for document response
+
+    Status values:
+    - uploaded: Successfully uploaded and stored (default)
+    - pending: Upload in progress
+    - failed: Upload failed
+    - processing: Being analyzed by AI (Phase 3)
+    - extracted: Text extraction complete (Phase 3)
+    - analysis_complete: Full AI analysis done (Phase 3)
+    - extraction_failed: AI processing failed (Phase 3)
+    - poor_quality: Low quality scan/image
+    - pending_review: Needs manual review
+    - approved: Reviewed and approved
+    - rejected: Rejected/invalid
+    """
     document_id: UUID
     case_id: UUID
     filename: str

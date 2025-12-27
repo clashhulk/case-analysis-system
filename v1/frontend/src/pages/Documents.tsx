@@ -41,13 +41,21 @@ const formatFileSize = (bytes: number): string => {
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
 };
 
+interface FileUploadState {
+  file: File;
+  status: 'pending' | 'uploading' | 'success' | 'error';
+  progress: number;
+  error?: string;
+}
+
 export default function Documents() {
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadQueue, setUploadQueue] = useState<FileUploadState[]>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
@@ -65,23 +73,6 @@ export default function Documents() {
     queryKey: ['documents', caseId],
     queryFn: () => documentsApi.list(caseId!),
     enabled: !!caseId,
-  });
-
-  // Upload mutation
-  const uploadMutation = useMutation({
-    mutationFn: (file: File) => documentsApi.upload(caseId!, file),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['documents', caseId] });
-      setSelectedFile(null);
-      setUploadError(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    },
-    onError: (error: any) => {
-      const errorMsg = error.response?.data?.detail || 'Failed to upload document';
-      setUploadError(errorMsg);
-    },
   });
 
   // Delete mutation
@@ -107,17 +98,58 @@ export default function Documents() {
   });
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      setSelectedFiles(files);
       setUploadError(null);
     }
   };
 
-  const handleUpload = () => {
-    if (selectedFile) {
-      uploadMutation.mutate(selectedFile);
+  const handleUpload = async () => {
+    if (selectedFiles.length === 0) return;
+
+    // Initialize queue
+    const initialQueue: FileUploadState[] = selectedFiles.map(file => ({
+      file,
+      status: 'pending',
+      progress: 0
+    }));
+    setUploadQueue(initialQueue);
+
+    // Upload files sequentially
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+
+      // Update status to uploading
+      setUploadQueue(prev => prev.map((item, idx) =>
+        idx === i ? { ...item, status: 'uploading', progress: 10 } : item
+      ));
+
+      try {
+        await documentsApi.upload(caseId!, file);
+
+        // Success
+        setUploadQueue(prev => prev.map((item, idx) =>
+          idx === i ? { ...item, status: 'success', progress: 100 } : item
+        ));
+      } catch (error: any) {
+        // Error
+        const errorMsg = error.response?.data?.detail || 'Upload failed';
+        setUploadQueue(prev => prev.map((item, idx) =>
+          idx === i ? { ...item, status: 'error', progress: 0, error: errorMsg } : item
+        ));
+      }
     }
+
+    // Refresh documents list
+    queryClient.invalidateQueries({ queryKey: ['documents', caseId] });
+
+    // Clear after completion
+    setTimeout(() => {
+      setSelectedFiles([]);
+      setUploadQueue([]);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }, 2000);
   };
 
   const handleDelete = (documentId: string) => {
@@ -149,27 +181,61 @@ export default function Documents() {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'uploaded':
+      case 'extracted':
+      case 'analysis_complete':
+      case 'approved':
         return <CheckCircle className="h-4 w-4" />;
+      case 'pending':
       case 'processing':
+      case 'pending_review':
         return <Clock className="h-4 w-4" />;
       case 'failed':
+      case 'extraction_failed':
+      case 'rejected':
+      case 'poor_quality':
         return <AlertCircle className="h-4 w-4" />;
       default:
-        return null;
+        return <CheckCircle className="h-4 w-4" />;
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'uploaded':
+      case 'extracted':
+      case 'analysis_complete':
+      case 'approved':
         return 'bg-green-100 text-green-800';
+      case 'pending':
       case 'processing':
+      case 'pending_review':
         return 'bg-yellow-100 text-yellow-800';
       case 'failed':
+      case 'extraction_failed':
+      case 'rejected':
         return 'bg-red-100 text-red-800';
+      case 'poor_quality':
+        return 'bg-orange-100 text-orange-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const getStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+      'uploaded': 'Uploaded',
+      'pending': 'Pending',
+      'processing': 'Processing',
+      'failed': 'Failed',
+      'extracted': 'Extracted',
+      'analysis_complete': 'Analyzed',
+      'extraction_failed': 'Extraction Failed',
+      'poor_quality': 'Poor Quality',
+      'pending_review': 'Pending Review',
+      'approved': 'Approved',
+      'rejected': 'Rejected'
+    };
+    return labels[status] || status.charAt(0).toUpperCase() + status.slice(1);
   };
 
   if (caseLoading) {
@@ -215,11 +281,12 @@ export default function Documents() {
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
         {/* Upload Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Upload Document</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Upload Documents</h2>
           <div className="flex items-center gap-4">
             <input
               ref={fileInputRef}
               type="file"
+              multiple
               onChange={handleFileSelect}
               accept=".pdf,.docx,.doc,.jpg,.jpeg,.png,.txt"
               className="block w-full text-sm text-gray-500
@@ -231,13 +298,68 @@ export default function Documents() {
             />
             <button
               onClick={handleUpload}
-              disabled={!selectedFile || uploadMutation.isPending}
+              disabled={selectedFiles.length === 0 || uploadQueue.some(q => q.status === 'uploading')}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
             >
               <Upload className="h-4 w-4" />
-              {uploadMutation.isPending ? 'Uploading...' : 'Upload'}
+              {uploadQueue.some(q => q.status === 'uploading')
+                ? 'Uploading...'
+                : selectedFiles.length > 0
+                ? `Upload (${selectedFiles.length})`
+                : 'Upload'
+              }
             </button>
           </div>
+
+          {/* Selected Files Preview */}
+          {selectedFiles.length > 0 && uploadQueue.length === 0 && (
+            <div className="mt-4 space-y-2">
+              <p className="text-sm font-medium text-gray-700">
+                Selected files ({selectedFiles.length}):
+              </p>
+              <div className="max-h-40 overflow-y-auto space-y-1">
+                {selectedFiles.map((file, idx) => (
+                  <div key={idx} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded text-sm">
+                    <span className="truncate">{file.name}</span>
+                    <span className="text-gray-500 ml-2">{formatFileSize(file.size)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Upload Progress */}
+          {uploadQueue.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <p className="text-sm font-medium text-gray-700">Upload Progress:</p>
+              {uploadQueue.map((item, idx) => (
+                <div key={idx} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="truncate flex-1">{item.file.name}</span>
+                    {item.status === 'uploading' && <span className="text-blue-600">Uploading...</span>}
+                    {item.status === 'success' && (
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                    )}
+                    {item.status === 'error' && (
+                      <AlertCircle className="h-4 w-4 text-red-600" />
+                    )}
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className={`h-2 rounded-full transition-all ${
+                        item.status === 'success' ? 'bg-green-600' :
+                        item.status === 'error' ? 'bg-red-600' : 'bg-blue-600'
+                      }`}
+                      style={{ width: `${item.progress}%` }}
+                    />
+                  </div>
+                  {item.error && (
+                    <p className="text-xs text-red-600">{item.error}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {uploadError && (
             <div className="mt-3 flex items-center gap-2 text-sm text-red-600">
@@ -246,15 +368,8 @@ export default function Documents() {
             </div>
           )}
 
-          {uploadMutation.isSuccess && (
-            <div className="mt-3 flex items-center gap-2 text-sm text-green-600">
-              <CheckCircle className="h-4 w-4" />
-              Document uploaded successfully!
-            </div>
-          )}
-
           <p className="mt-3 text-xs text-gray-500">
-            Supported formats: PDF, DOCX, DOC, JPG, PNG, TXT (Max 50MB)
+            Supported formats: PDF, DOCX, DOC, JPG, PNG, TXT (Max 50MB per file)
           </p>
         </div>
 
@@ -330,12 +445,12 @@ export default function Documents() {
                       </div>
                       <div className="flex items-center gap-3">
                         <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${getStatusColor(
+                          className={`px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-2 ${getStatusColor(
                             doc.status
                           )}`}
                         >
                           {getStatusIcon(doc.status)}
-                          {doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
+                          {getStatusLabel(doc.status)}
                         </span>
                         <button
                           onClick={() => setDeleteConfirmId(doc.document_id)}
