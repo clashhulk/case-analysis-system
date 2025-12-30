@@ -76,6 +76,25 @@ class S3Service:
             logger.error(f"Error uploading file to S3: {e}")
             return False
 
+    def download_file(self, s3_key: str, local_path: str) -> bool:
+        """
+        Download a file from S3 to local disk
+
+        Args:
+            s3_key: S3 object key to download
+            local_path: Local file path to save to
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.client.download_file(self.bucket_name, s3_key, local_path)
+            logger.info(f"Successfully downloaded {s3_key} to {local_path}")
+            return True
+        except ClientError as e:
+            logger.error(f"Error downloading file from S3: {e}")
+            return False
+
     def delete_file(self, s3_key: str) -> bool:
         """
         Delete a file from S3

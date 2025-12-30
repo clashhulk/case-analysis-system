@@ -1,5 +1,13 @@
 import axios from 'axios';
-import type { Case, CreateCaseRequest, UpdateCaseRequest, Document, DocumentUploadResponse } from '@/types';
+import type {
+  Case,
+  CreateCaseRequest,
+  UpdateCaseRequest,
+  Document,
+  DocumentUploadResponse,
+  DocumentAnalysis,
+  AnalysisCostEstimate
+} from '@/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -67,5 +75,40 @@ export const documentsApi = {
 
   delete: async (caseId: string, documentId: string): Promise<void> => {
     await api.delete(`/cases/${caseId}/documents/${documentId}`);
+  },
+
+  // AI Analysis methods
+  analyze: async (caseId: string, documentId: string, forceReanalyze: boolean = false): Promise<DocumentAnalysis> => {
+    const response = await api.post<DocumentAnalysis>(
+      `/cases/${caseId}/documents/${documentId}/analyze`,
+      { force_reanalyze: forceReanalyze }
+    );
+    return response.data;
+  },
+
+  getAnalysis: async (caseId: string, documentId: string): Promise<DocumentAnalysis> => {
+    const response = await api.get<DocumentAnalysis>(
+      `/cases/${caseId}/documents/${documentId}/analysis`
+    );
+    return response.data;
+  },
+
+  analyzeBulk: async (caseId: string, documentIds: string[], forceReanalyze: boolean = false): Promise<any> => {
+    const response = await api.post(
+      `/cases/${caseId}/documents/analyze-bulk`,
+      {
+        document_ids: documentIds,
+        force_reanalyze: forceReanalyze
+      }
+    );
+    return response.data;
+  },
+
+  estimateCost: async (caseId: string, documentIds: string[]): Promise<AnalysisCostEstimate> => {
+    const response = await api.post<AnalysisCostEstimate>(
+      `/cases/${caseId}/documents/estimate-cost`,
+      { document_ids: documentIds }
+    );
+    return response.data;
   },
 };

@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # AI Services
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    openai_enabled: bool = True  # Master switch for GPT-4 entity extraction
+    ai_daily_budget_usd: float = 100.0
+    ai_max_retries: int = 3
+
+    # Text Extraction
+    tesseract_path: str = "/usr/bin/tesseract"  # Path to tesseract executable for OCR
+    max_text_length: int = 100000  # Maximum characters to extract from documents
 
     # Security
     secret_key: str = "your-secret-key-change-in-production"

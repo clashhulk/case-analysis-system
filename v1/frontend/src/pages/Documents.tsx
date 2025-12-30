@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { documentsApi, casesApi } from '@/api/client';
+import type { DocumentAnalysis, AnalysisCostEstimate } from '@/types';
 import {
   FileText,
   Upload,
@@ -12,7 +13,10 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
-  ArrowLeft
+  ArrowLeft,
+  Sparkles,
+  Users,
+  X
 } from 'lucide-react';
 
 const FILE_ICONS: Record<string, any> = {
@@ -61,6 +65,13 @@ export default function Documents() {
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // AI Analysis state
+  const [analyzingDocs, setAnalyzingDocs] = useState<Set<string>>(new Set());
+  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
+  const [selectedAnalysis, setSelectedAnalysis] = useState<DocumentAnalysis | null>(null);
+  const [showCostEstimate, setShowCostEstimate] = useState(false);
+  const [costEstimate, setCostEstimate] = useState<AnalysisCostEstimate | null>(null);
+
   // Fetch case data
   const { data: caseData, isLoading: caseLoading } = useQuery({
     queryKey: ['case', caseId],
@@ -96,6 +107,83 @@ export default function Documents() {
       setSelectedDocIds(new Set());
     },
   });
+
+  // Analysis mutation
+  const analyzeMutation = useMutation({
+    mutationFn: ({ documentId, forceReanalyze }: { documentId: string; forceReanalyze: boolean }) =>
+      documentsApi.analyze(caseId!, documentId, forceReanalyze),
+    onSuccess: (data, variables) => {
+      setAnalyzingDocs(prev => new Set(prev).add(variables.documentId));
+      pollForAnalysis(variables.documentId);
+    },
+  });
+
+  // Poll for analysis results
+  const pollForAnalysis = (documentId: string) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const analysis = await documentsApi.getAnalysis(caseId!, documentId);
+        if (analysis.status !== 'processing') {
+          clearInterval(pollInterval);
+          setAnalyzingDocs(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(documentId);
+            return newSet;
+          });
+          queryClient.invalidateQueries({ queryKey: ['documents', caseId] });
+        }
+      } catch (error) {
+        console.error('Failed to poll analysis:', error);
+        clearInterval(pollInterval);
+        setAnalyzingDocs(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(documentId);
+          return newSet;
+        });
+      }
+    }, 3000); // Poll every 3 seconds
+  };
+
+  // Handle bulk analyze
+  const handleBulkAnalyze = async () => {
+    try {
+      const estimate = await documentsApi.estimateCost(caseId!, Array.from(selectedDocIds));
+      setCostEstimate(estimate);
+      setShowCostEstimate(true);
+    } catch (error) {
+      console.error('Failed to estimate cost:', error);
+      alert('Failed to estimate cost. Please try again.');
+    }
+  };
+
+  // Confirm bulk analyze
+  const confirmBulkAnalyze = async () => {
+    setShowCostEstimate(false);
+    try {
+      await documentsApi.analyzeBulk(caseId!, Array.from(selectedDocIds));
+      setSelectedDocIds(new Set());
+      // Start polling for all documents
+      Array.from(selectedDocIds).forEach(id => {
+        setAnalyzingDocs(prev => new Set(prev).add(id));
+        pollForAnalysis(id);
+      });
+    } catch (error) {
+      console.error('Failed to start bulk analysis:', error);
+      alert('Failed to start analysis. Please try again.');
+    }
+  };
+
+  // View analysis results
+  const handleViewAnalysis = async (documentId: string) => {
+    try {
+      const analysis = await documentsApi.getAnalysis(caseId!, documentId);
+      setSelectedAnalysis(analysis);
+      setShowAnalysisModal(true);
+    } catch (error) {
+      console.error('Failed to fetch analysis:', error);
+      alert('Failed to load analysis results.');
+    }
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -393,13 +481,22 @@ export default function Documents() {
             </div>
 
             {selectedDocIds.size > 0 && (
-              <button
-                onClick={() => setBulkDeleteConfirm(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition text-sm"
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete Selected
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleBulkAnalyze}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-sm"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Analyze Selected
+                </button>
+                <button
+                  onClick={() => setBulkDeleteConfirm(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition text-sm"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete Selected
+                </button>
+              </div>
             )}
           </div>
 
@@ -452,6 +549,50 @@ export default function Documents() {
                           {getStatusIcon(doc.status)}
                           {getStatusLabel(doc.status)}
                         </span>
+
+                        {/* Analyze button for uploaded documents */}
+                        {doc.status === 'uploaded' && !analyzingDocs.has(doc.document_id) && (
+                          <button
+                            onClick={() => analyzeMutation.mutate({ documentId: doc.document_id, forceReanalyze: false })}
+                            disabled={analyzeMutation.isPending}
+                            className="px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-sm disabled:opacity-50"
+                          >
+                            Analyze
+                          </button>
+                        )}
+
+                        {/* Retry button for failed documents */}
+                        {['failed', 'extraction_failed', 'poor_quality'].includes(doc.status) && !analyzingDocs.has(doc.document_id) && (
+                          <button
+                            onClick={() => analyzeMutation.mutate({ documentId: doc.document_id, forceReanalyze: true })}
+                            disabled={analyzeMutation.isPending}
+                            className="px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition text-sm disabled:opacity-50 flex items-center gap-1"
+                            title="Retry analysis"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Retry Analysis
+                          </button>
+                        )}
+
+                        {/* Analyzing status */}
+                        {analyzingDocs.has(doc.document_id) && (
+                          <span className="px-3 py-1.5 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium">
+                            Analyzing...
+                          </span>
+                        )}
+
+                        {/* View Analysis button for completed */}
+                        {doc.status === 'analysis_complete' && (
+                          <button
+                            onClick={() => handleViewAnalysis(doc.document_id)}
+                            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm"
+                          >
+                            View Analysis
+                          </button>
+                        )}
+
                         <button
                           onClick={() => setDeleteConfirmId(doc.document_id)}
                           className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
@@ -526,6 +667,171 @@ export default function Documents() {
                 {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete All'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cost Estimation Modal */}
+      {showCostEstimate && costEstimate && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4">Analyze {costEstimate.total_documents} Documents?</h2>
+
+            <div className="space-y-3 mb-6">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Estimated Cost:</span>
+                <span className="font-semibold">${costEstimate.estimated_cost_usd.toFixed(3)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Estimated Time:</span>
+                <span className="font-semibold">{Math.ceil(costEstimate.estimated_time_seconds / 60)} minutes</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Remaining Budget:</span>
+                <span className={`font-semibold ${costEstimate.within_budget ? 'text-green-600' : 'text-red-600'}`}>
+                  ${costEstimate.remaining_budget_usd.toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {!costEstimate.within_budget && (
+              <div className="mb-4 p-3 bg-red-50 text-red-800 rounded text-sm">
+                ⚠️ This operation exceeds your daily budget. Please reduce the number of documents or try again tomorrow.
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowCostEstimate(false)}
+                className="flex-1 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmBulkAnalyze}
+                disabled={!costEstimate.within_budget}
+                className="flex-1 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Analysis Results Modal */}
+      {showAnalysisModal && selectedAnalysis && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-6">
+              <h2 className="text-2xl font-bold">Document Analysis</h2>
+              <button onClick={() => setShowAnalysisModal(false)} className="text-gray-500 hover:text-gray-700">
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Summary Section */}
+            {selectedAnalysis.analysis && (
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-blue-600" />
+                  Summary
+                </h3>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <p className="text-gray-700">{selectedAnalysis.analysis.summary}</p>
+                  <div className="mt-3 flex items-center gap-4">
+                    <span className="text-sm font-medium text-gray-600">Classification:</span>
+                    <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                      {selectedAnalysis.analysis.classification}
+                    </span>
+                    <span className="text-sm text-gray-500">
+                      Confidence: {(selectedAnalysis.analysis.confidence * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Key Points */}
+            {selectedAnalysis.analysis?.key_points && (
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold mb-2">Key Points</h3>
+                <ul className="list-disc list-inside space-y-1 text-gray-700">
+                  {selectedAnalysis.analysis.key_points.map((point, idx) => (
+                    <li key={idx}>{point}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Entities Section */}
+            {selectedAnalysis.entities && (
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                  <Users className="h-5 w-5 text-purple-600" />
+                  Extracted Entities
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* People */}
+                  {selectedAnalysis.entities.people && selectedAnalysis.entities.people.length > 0 && (
+                    <div className="bg-purple-50 p-3 rounded-lg">
+                      <h4 className="font-medium text-purple-900 mb-2">People</h4>
+                      {selectedAnalysis.entities.people.map((person, idx) => (
+                        <div key={idx} className="text-sm mb-1">
+                          <span className="font-medium">{person.name}</span>
+                          {person.role && <span className="text-gray-600"> - {person.role}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Dates */}
+                  {selectedAnalysis.entities.dates && selectedAnalysis.entities.dates.length > 0 && (
+                    <div className="bg-green-50 p-3 rounded-lg">
+                      <h4 className="font-medium text-green-900 mb-2">Dates</h4>
+                      {selectedAnalysis.entities.dates.map((date, idx) => (
+                        <div key={idx} className="text-sm">{date}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Locations */}
+                  {selectedAnalysis.entities.locations && selectedAnalysis.entities.locations.length > 0 && (
+                    <div className="bg-orange-50 p-3 rounded-lg">
+                      <h4 className="font-medium text-orange-900 mb-2">Locations</h4>
+                      {selectedAnalysis.entities.locations.map((loc, idx) => (
+                        <div key={idx} className="text-sm">{loc}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Case Numbers */}
+                  {selectedAnalysis.entities.case_numbers && selectedAnalysis.entities.case_numbers.length > 0 && (
+                    <div className="bg-blue-50 p-3 rounded-lg">
+                      <h4 className="font-medium text-blue-900 mb-2">Case Numbers</h4>
+                      {selectedAnalysis.entities.case_numbers.map((num, idx) => (
+                        <div key={idx} className="text-sm font-mono">{num}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Processing Info */}
+            {selectedAnalysis.processing && (
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between text-sm text-gray-600">
+                  <span>Processing Cost: ${selectedAnalysis.processing.total_cost_usd?.toFixed(3)}</span>
+                  {selectedAnalysis.processing.duration_ms && (
+                    <span>Duration: {(selectedAnalysis.processing.duration_ms / 1000).toFixed(1)}s</span>
+                  )}
+                  {selectedAnalysis.analysis && (
+                    <span>Model: {selectedAnalysis.analysis.model}</span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

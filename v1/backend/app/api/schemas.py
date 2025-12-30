@@ -69,3 +69,57 @@ class DocumentUploadResponse(BaseModel):
     """Schema for document upload response"""
     document: DocumentResponse
     message: str = "Document uploaded successfully"
+
+
+class DocumentAnalysisResponse(BaseModel):
+    """Schema for document analysis results"""
+    document_id: UUID
+    status: str  # "processing", "analysis_complete", "extraction_failed", "poor_quality"
+    extraction: Optional[dict] = Field(
+        None,
+        description="Text extraction results with text, quality_score, method, etc."
+    )
+    analysis: Optional[dict] = Field(
+        None,
+        description="Claude analysis results with summary, classification, key_points"
+    )
+    entities: Optional[dict] = Field(
+        None,
+        description="GPT-4 entity extraction with people, dates, locations, case_numbers"
+    )
+    processing: Optional[dict] = Field(
+        None,
+        description="Processing metadata with timestamps and costs"
+    )
+
+    class Config:
+        from_attributes = True
+
+
+class AnalyzeDocumentRequest(BaseModel):
+    """Schema for triggering document analysis"""
+    force_reanalyze: bool = Field(
+        default=False,
+        description="Re-analyze even if already processed"
+    )
+
+
+class BulkAnalyzeRequest(BaseModel):
+    """Schema for bulk document analysis"""
+    document_ids: list[UUID] = Field(
+        ...,
+        description="List of document IDs to analyze"
+    )
+    force_reanalyze: bool = Field(
+        default=False,
+        description="Re-analyze documents even if already processed"
+    )
+
+
+class AnalysisCostEstimate(BaseModel):
+    """Schema for cost estimation before processing"""
+    total_documents: int = Field(..., description="Number of documents to process")
+    estimated_cost_usd: float = Field(..., description="Estimated total cost in USD")
+    estimated_time_seconds: int = Field(..., description="Estimated processing time")
+    within_budget: bool = Field(..., description="Whether operation is within daily budget")
+    remaining_budget_usd: float = Field(..., description="Remaining daily budget in USD")
