@@ -144,16 +144,18 @@ export default function DocumentDetail() {
     }
   });
 
-  // Annotation mutations
+  // Annotation mutations with optimistic updates and cache invalidation
   const createAnnotationMutation = useMutation({
     mutationFn: (data: AnnotationCreate) =>
       documentsApi.createAnnotation(caseId!, documentId!, data),
     onSuccess: (newAnnotation) => {
-      // Optimistically update the cache with the new annotation
+      // Optimistic update: immediately show in UI
       queryClient.setQueryData(
         ['document-annotations', caseId, documentId],
         (old: any) => [...(old || []), newAnnotation]
       );
+      // Refetch to ensure persistence
+      queryClient.invalidateQueries({ queryKey: ['document-annotations', caseId, documentId] });
     }
   });
 
@@ -161,11 +163,13 @@ export default function DocumentDetail() {
     mutationFn: (annotationId: string) =>
       documentsApi.deleteAnnotation(caseId!, documentId!, annotationId),
     onSuccess: (_, annotationId) => {
-      // Optimistically remove from cache
+      // Optimistic update: immediately remove from UI
       queryClient.setQueryData(
         ['document-annotations', caseId, documentId],
         (old: any) => (old || []).filter((ann: any) => ann.id !== annotationId)
       );
+      // Refetch to ensure persistence
+      queryClient.invalidateQueries({ queryKey: ['document-annotations', caseId, documentId] });
     }
   });
 

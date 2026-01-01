@@ -94,7 +94,7 @@ export default function PdfViewer({
   const fitWidth = () => setScale(1.0);
   const fitPage = () => setScale(0.75);
 
-  // Handle text selection for highlighting
+  // Handle text selection for highlighting (only in single-page mode)
   const handleTextSelection = useCallback(() => {
     if (!highlightMode) return;
 
@@ -108,20 +108,18 @@ export default function PdfViewer({
     if (!text) return;
 
     setSelectedText(text);
-
-    // Get selection rects
     const range = selection.getRangeAt(0);
     const rects = Array.from(range.getClientRects());
 
     if (rects.length > 0) {
       setSelectionRects(rects);
 
-      // Find which page the selection is on
+      // Find the PDF page element containing the selection
       let targetPage: HTMLElement | null = null;
       let pageNumber = currentPage;
 
       if (scrollMode) {
-        // In scroll mode, find the page container that contains the selection
+        // Scroll mode: traverse DOM to find page container with data-page-number
         const startContainer = range.startContainer;
         let element = startContainer instanceof Element ? startContainer : startContainer.parentElement;
 
@@ -134,12 +132,13 @@ export default function PdfViewer({
           element = element.parentElement;
         }
       } else {
-        // In single page mode
+        // Single page mode: get page from ref
         if (pageRef.current) {
           targetPage = pageRef.current.querySelector('.react-pdf__Page') as HTMLElement;
         }
       }
 
+      // Position color picker button at end of selection
       if (targetPage) {
         const pageRect = targetPage.getBoundingClientRect();
         const lastRect = rects[rects.length - 1];
@@ -153,17 +152,17 @@ export default function PdfViewer({
     }
   }, [highlightMode, scrollMode, currentPage]);
 
-  // Create highlight from selection
+  // Create highlight annotation from current selection
   const createHighlight = (colorOverride?: string) => {
     if (selectionRects.length === 0) return;
 
-    // Find the actual PDF page element to ensure accurate positioning
+    // Find the PDF page element containing the selection
     let targetPage: HTMLElement | null = null;
     let pageNumber = currentPage;
 
     const selection = window.getSelection();
     if (selection && selection.rangeCount > 0 && scrollMode) {
-      // In scroll mode, find which page contains the selection
+      // Scroll mode: find page by traversing DOM
       const range = selection.getRangeAt(0);
       const startContainer = range.startContainer;
       let element = startContainer instanceof Element ? startContainer : startContainer.parentElement;
@@ -177,14 +176,14 @@ export default function PdfViewer({
         element = element.parentElement;
       }
     } else if (pageRef.current) {
-      // Single page mode
+      // Single page mode: get page from ref
       targetPage = pageRef.current.querySelector('.react-pdf__Page') as HTMLElement;
     }
 
     if (!targetPage) return;
 
+    // Convert selection rects to percentage-based coordinates (zoom-invariant)
     const pageRect = targetPage.getBoundingClientRect();
-
     const annotationRects = selectionRects.map(rect => ({
       x: ((rect.left - pageRect.left) / pageRect.width) * 100,
       y: ((rect.top - pageRect.top) / pageRect.height) * 100,
@@ -199,7 +198,7 @@ export default function PdfViewer({
       text: selectedText
     });
 
-    // Clear selection
+    // Clear selection state
     window.getSelection()?.removeAllRanges();
     setShowHighlightButton(false);
     setSelectionRects([]);
@@ -356,59 +355,61 @@ export default function PdfViewer({
           </button>
         </div>
 
-        {/* Highlight Controls */}
-        <div className="flex items-center gap-2">
-            <button
-              onClick={() => setHighlightMode(!highlightMode)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                highlightMode
-                  ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-              title="Toggle highlight mode"
-            >
-              <Highlighter className="h-4 w-4" />
-              {highlightMode ? 'Highlighting' : 'Highlight'}
-            </button>
+        {/* Highlight Controls - Only available in single page mode */}
+        {!scrollMode && (
+          <div className="flex items-center gap-2">
+              <button
+                onClick={() => setHighlightMode(!highlightMode)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                  highlightMode
+                    ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+                title="Toggle highlight mode"
+              >
+                <Highlighter className="h-4 w-4" />
+                {highlightMode ? 'Highlighting' : 'Highlight'}
+              </button>
 
-            {highlightMode && (
-              <div className="relative">
-                <button
-                  onClick={() => setShowColorPicker(!showColorPicker)}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded border border-gray-300 hover:bg-gray-50"
-                >
-                  <div
-                    className="w-4 h-4 rounded"
-                    style={{ backgroundColor: getColorConfig(selectedColor).color }}
-                  />
-                  <ChevronLeft className="h-3 w-3 rotate-[-90deg]" />
-                </button>
+              {highlightMode && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowColorPicker(!showColorPicker)}
+                    className="flex items-center gap-1.5 px-2 py-1.5 rounded border border-gray-300 hover:bg-gray-50"
+                  >
+                    <div
+                      className="w-4 h-4 rounded"
+                      style={{ backgroundColor: getColorConfig(selectedColor).color }}
+                    />
+                    <ChevronLeft className="h-3 w-3 rotate-[-90deg]" />
+                  </button>
 
-                {showColorPicker && (
-                  <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-2 z-50">
-                    <div className="flex gap-1">
-                      {HIGHLIGHT_COLORS.map((c) => (
-                        <button
-                          key={c.name}
-                          onClick={() => {
-                            setSelectedColor(c.name);
-                            setShowColorPicker(false);
-                          }}
-                          className={`w-8 h-8 rounded border-2 ${
-                            selectedColor === c.name
-                              ? 'border-gray-800'
-                              : 'border-transparent'
-                          }`}
-                          style={{ backgroundColor: c.color }}
-                          title={c.name}
-                        />
-                      ))}
+                  {showColorPicker && (
+                    <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-2 z-50">
+                      <div className="flex gap-1">
+                        {HIGHLIGHT_COLORS.map((c) => (
+                          <button
+                            key={c.name}
+                            onClick={() => {
+                              setSelectedColor(c.name);
+                              setShowColorPicker(false);
+                            }}
+                            className={`w-8 h-8 rounded border-2 ${
+                              selectedColor === c.name
+                                ? 'border-gray-800'
+                                : 'border-transparent'
+                            }`}
+                            style={{ backgroundColor: c.color }}
+                            title={c.name}
+                          />
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            )}
-        </div>
+                  )}
+                </div>
+              )}
+          </div>
+        )}
       </div>
 
       {/* PDF Container */}
@@ -525,45 +526,58 @@ export default function PdfViewer({
               />
             </Document>
 
-            {/* Render saved annotations */}
-            {pdfPageRect && currentPageAnnotations.map((annotation) => (
-              <div key={annotation.id} className="absolute pointer-events-none" style={{
-                left: pdfPageRect.left,
-                top: pdfPageRect.top,
-                width: pdfPageRect.width,
-                height: pdfPageRect.height
-              }}>
-                {annotation.rects.map((rect, idx) => (
-                  <div
-                    key={idx}
-                    className="absolute group"
-                    style={{
-                      left: `${rect.x}%`,
-                      top: `${rect.y}%`,
-                      width: `${rect.width}%`,
-                      height: `${rect.height}%`,
-                      backgroundColor: getColorConfig(annotation.color).bgColor,
-                      pointerEvents: 'none'
-                    }}
-                    title={annotation.text || 'Highlight'}
-                  >
-                    {/* Delete button on hover - only show on first rect */}
-                    {idx === 0 && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteAnnotation(annotation.id);
-                        }}
-                        className="absolute -top-6 -right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition pointer-events-auto"
-                        title="Delete highlight"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ))}
+            {/* Render annotations: overlay positioned to match PDF page exactly */}
+            {(() => {
+              const pdfPage = pageRef.current?.querySelector('.react-pdf__Page') as HTMLElement;
+              if (!pdfPage) return null;
+
+              const pageRect = pdfPage.getBoundingClientRect();
+              const containerRect = pageRef.current?.getBoundingClientRect();
+              if (!containerRect) return null;
+
+              return currentPageAnnotations.map((annotation) => (
+                <div
+                  key={annotation.id}
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: pageRect.left - containerRect.left,
+                    top: pageRect.top - containerRect.top,
+                    width: pageRect.width,
+                    height: pageRect.height
+                  }}
+                >
+                  {annotation.rects.map((rect, idx) => (
+                    <div
+                      key={idx}
+                      className="absolute group"
+                      style={{
+                        left: `${rect.x}%`,
+                        top: `${rect.y}%`,
+                        width: `${rect.width}%`,
+                        height: `${rect.height}%`,
+                        backgroundColor: getColorConfig(annotation.color).bgColor,
+                        pointerEvents: 'none'
+                      }}
+                      title={annotation.text || 'Highlight'}
+                    >
+                      {/* Delete button on hover - only show on first rect */}
+                      {idx === 0 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteAnnotation(annotation.id);
+                          }}
+                          className="absolute -top-6 -right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition pointer-events-auto z-10"
+                          title="Delete highlight"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ));
+            })()}
 
             {/* Highlight button that appears on text selection */}
             {showHighlightButton && highlightMode && (
@@ -599,8 +613,8 @@ export default function PdfViewer({
         </div>
       )}
 
-      {/* Highlight mode indicator */}
-      {highlightMode && (
+      {/* Highlight mode indicator - Only show in single page mode */}
+      {highlightMode && !scrollMode && (
         <div className="absolute bottom-4 left-4 bg-yellow-100 text-yellow-800 px-3 py-1.5 rounded-lg text-sm font-medium shadow">
           Select text to highlight
         </div>

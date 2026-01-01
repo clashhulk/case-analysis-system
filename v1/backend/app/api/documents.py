@@ -940,6 +940,10 @@ async def create_annotation(
     document.document_metadata = metadata
     document.updated_at = datetime.utcnow()
 
+    # Required: SQLAlchemy doesn't auto-detect JSONB mutations
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(document, "document_metadata")
+
     # Create audit event
     event = Event(
         aggregate_type="document",
@@ -1043,6 +1047,10 @@ async def delete_annotation(
 
     document.document_metadata = metadata
     document.updated_at = datetime.utcnow()
+
+    # Required: SQLAlchemy doesn't auto-detect JSONB mutations
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(document, "document_metadata")
 
     # Create audit event
     event = Event(
