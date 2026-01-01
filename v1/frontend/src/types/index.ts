@@ -99,3 +99,63 @@ export interface AnalysisCostEstimate {
   within_budget: boolean;
   remaining_budget_usd: number;
 }
+
+// Document Detail View Types
+
+export interface DocumentPreviewUrl {
+  url: string;
+  expires_at: string;
+  file_type: string;
+  filename: string;
+}
+
+export interface PersonEntity {
+  name: string;
+  role: string;
+  confidence: number;
+}
+
+export interface EntitiesUpdate {
+  people?: PersonEntity[];
+  dates?: string[];
+  locations?: string[];
+  case_numbers?: string[];
+  organizations?: string[];
+}
+
+export interface AnalysisUpdateRequest {
+  summary?: string;
+  classification?: string;
+  key_points?: string[];
+  entities?: EntitiesUpdate;
+}
+
+export interface AnnotationRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface Annotation {
+  id: string;
+  page: number;
+  rects: AnnotationRect[];
+  color: string;
+  text?: string;
+  created_at: string;
+}
+
+export interface AnnotationCreate {
+  page: number;
+  rects: AnnotationRect[];
+  color: string;
+  text?: string;
+}
+
+// Edit state for document analysis
+export interface AnalysisEditState {
+  isEditing: boolean;
+  isDirty: boolean;
+  editedValues: Partial<AnalysisUpdateRequest>;
+}

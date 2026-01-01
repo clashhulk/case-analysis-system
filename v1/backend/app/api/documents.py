@@ -17,7 +17,11 @@ from app.api.schemas import (
     DocumentAnalysisResponse,
     AnalyzeDocumentRequest,
     BulkAnalyzeRequest,
-    AnalysisCostEstimate
+    AnalysisCostEstimate,
+    DocumentPreviewUrl,
+    AnalysisUpdateRequest,
+    AnnotationCreate,
+    AnnotationResponse
 )
 from app.services.s3_service import get_s3_service, S3Service
 
@@ -731,4 +735,430 @@ async def estimate_cost(
         estimated_time_seconds=estimated_time,
         within_budget=total_cost <= remaining,
         remaining_budget_usd=remaining
+    )
+
+
+# ============================================================================
+# Document Detail View Endpoints
+# ============================================================================
+
+@router.get("/{document_id}/preview-url", response_model=DocumentPreviewUrl)
+async def get_preview_url(
+    case_id: UUID,
+    document_id: UUID,
+    db: Session = Depends(get_db),
+    s3_service: S3Service = Depends(get_s3_service)
+):
+    """
+    Get a presigned URL for document preview
+
+    URL is valid for 1 hour. Use for PDF/image viewing in browser.
+    """
+    from datetime import timedelta
+
+    document = db.query(Document).filter(
+        Document.document_id == document_id,
+        Document.case_id == case_id
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID {document_id} not found in case {case_id}"
+        )
+
+    # Generate presigned URL (1 hour expiry)
+    url = s3_service.get_file_url(document.s3_key, expiration=3600)
+
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate preview URL"
+        )
+
+    return DocumentPreviewUrl(
+        url=url,
+        expires_at=datetime.utcnow() + timedelta(hours=1),
+        file_type=document.file_type,
+        filename=document.original_filename
+    )
+
+
+@router.patch("/{document_id}/analysis", response_model=DocumentAnalysisResponse)
+async def update_analysis(
+    case_id: UUID,
+    document_id: UUID,
+    request: AnalysisUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Update document analysis with user corrections
+
+    Allows users to correct AI-extracted summary, classification,
+    key points, and entities. Marks the document as user-edited.
+    """
+    document = db.query(Document).filter(
+        Document.document_id == document_id,
+        Document.case_id == case_id
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID {document_id} not found in case {case_id}"
+        )
+
+    if not document.document_metadata:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No analysis data to update. Run analysis first."
+        )
+
+    # Deep copy metadata for update
+    metadata = dict(document.document_metadata)
+
+    # Update analysis fields
+    if request.summary is not None:
+        if "analysis" not in metadata:
+            metadata["analysis"] = {}
+        metadata["analysis"]["summary"] = request.summary
+
+    if request.classification is not None:
+        if "analysis" not in metadata:
+            metadata["analysis"] = {}
+        metadata["analysis"]["classification"] = request.classification
+
+    if request.key_points is not None:
+        if "analysis" not in metadata:
+            metadata["analysis"] = {}
+        metadata["analysis"]["key_points"] = request.key_points
+
+    # Update entities
+    if request.entities is not None:
+        if "entities" not in metadata:
+            metadata["entities"] = {}
+
+        if request.entities.people is not None:
+            metadata["entities"]["people"] = [
+                {"name": p.name, "role": p.role, "confidence": p.confidence}
+                for p in request.entities.people
+            ]
+
+        if request.entities.dates is not None:
+            metadata["entities"]["dates"] = request.entities.dates
+
+        if request.entities.locations is not None:
+            metadata["entities"]["locations"] = request.entities.locations
+
+        if request.entities.case_numbers is not None:
+            metadata["entities"]["case_numbers"] = request.entities.case_numbers
+
+        if request.entities.organizations is not None:
+            metadata["entities"]["organizations"] = request.entities.organizations
+
+    # Mark as user-edited
+    metadata["user_edited"] = True
+    metadata["edited_at"] = datetime.utcnow().isoformat()
+
+    # Save changes
+    document.document_metadata = metadata
+    document.updated_at = datetime.utcnow()
+
+    # Create audit event
+    updated_fields = [k for k, v in request.model_dump(exclude_none=True).items() if v is not None]
+    event = Event(
+        aggregate_type="document",
+        aggregate_id=document_id,
+        event_type="DocumentAnalysisUpdated",
+        event_data={
+            "case_id": str(case_id),
+            "updated_fields": updated_fields
+        },
+        event_metadata={"source": "user_correction"}
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(document)
+
+    return DocumentAnalysisResponse(
+        document_id=document_id,
+        status=document.status,
+        extraction=metadata.get("extraction"),
+        analysis=metadata.get("analysis"),
+        entities=metadata.get("entities"),
+        processing=metadata.get("processing")
+    )
+
+
+@router.post("/{document_id}/annotations", response_model=AnnotationResponse, status_code=status.HTTP_201_CREATED)
+async def create_annotation(
+    case_id: UUID,
+    document_id: UUID,
+    request: AnnotationCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Save a PDF annotation (highlight)
+
+    Annotations are stored in document_metadata.annotations array.
+    """
+    document = db.query(Document).filter(
+        Document.document_id == document_id,
+        Document.case_id == case_id
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID {document_id} not found in case {case_id}"
+        )
+
+    # Initialize metadata if needed
+    if not document.document_metadata:
+        document.document_metadata = {}
+
+    metadata = dict(document.document_metadata)
+
+    # Initialize annotations array if needed
+    if "annotations" not in metadata:
+        metadata["annotations"] = []
+
+    # Create annotation
+    annotation_id = str(uuid.uuid4())
+    created_at = datetime.utcnow()
+
+    annotation = {
+        "id": annotation_id,
+        "page": request.page,
+        "rects": [rect.model_dump() for rect in request.rects],
+        "color": request.color,
+        "text": request.text,
+        "created_at": created_at.isoformat()
+    }
+
+    metadata["annotations"].append(annotation)
+    document.document_metadata = metadata
+    document.updated_at = datetime.utcnow()
+
+    # Create audit event
+    event = Event(
+        aggregate_type="document",
+        aggregate_id=document_id,
+        event_type="DocumentAnnotationAdded",
+        event_data={
+            "case_id": str(case_id),
+            "annotation_id": annotation_id,
+            "page": request.page
+        },
+        event_metadata={"source": "user"}
+    )
+    db.add(event)
+    db.commit()
+
+    return AnnotationResponse(
+        id=annotation_id,
+        page=request.page,
+        rects=request.rects,
+        color=request.color,
+        text=request.text,
+        created_at=created_at
+    )
+
+
+@router.get("/{document_id}/annotations", response_model=list[AnnotationResponse])
+async def get_annotations(
+    case_id: UUID,
+    document_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all annotations for a document
+    """
+    document = db.query(Document).filter(
+        Document.document_id == document_id,
+        Document.case_id == case_id
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID {document_id} not found in case {case_id}"
+        )
+
+    if not document.document_metadata or "annotations" not in document.document_metadata:
+        return []
+
+    from app.api.schemas import AnnotationRect
+
+    annotations = []
+    for ann in document.document_metadata["annotations"]:
+        annotations.append(AnnotationResponse(
+            id=ann["id"],
+            page=ann["page"],
+            rects=[AnnotationRect(**rect) for rect in ann["rects"]],
+            color=ann["color"],
+            text=ann.get("text"),
+            created_at=datetime.fromisoformat(ann["created_at"])
+        ))
+
+    return annotations
+
+
+@router.delete("/{document_id}/annotations/{annotation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_annotation(
+    case_id: UUID,
+    document_id: UUID,
+    annotation_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a specific annotation
+    """
+    document = db.query(Document).filter(
+        Document.document_id == document_id,
+        Document.case_id == case_id
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID {document_id} not found in case {case_id}"
+        )
+
+    if not document.document_metadata or "annotations" not in document.document_metadata:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No annotations found"
+        )
+
+    metadata = dict(document.document_metadata)
+    original_count = len(metadata["annotations"])
+    metadata["annotations"] = [a for a in metadata["annotations"] if a["id"] != annotation_id]
+
+    if len(metadata["annotations"]) == original_count:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Annotation {annotation_id} not found"
+        )
+
+    document.document_metadata = metadata
+    document.updated_at = datetime.utcnow()
+
+    # Create audit event
+    event = Event(
+        aggregate_type="document",
+        aggregate_id=document_id,
+        event_type="DocumentAnnotationDeleted",
+        event_data={
+            "case_id": str(case_id),
+            "annotation_id": annotation_id
+        },
+        event_metadata={"source": "user"}
+    )
+    db.add(event)
+    db.commit()
+
+    return None
+
+
+@router.get("/{document_id}/export/docx")
+async def export_docx(
+    case_id: UUID,
+    document_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    Export document analysis as DOCX
+
+    Generates a Word document with summary, classification,
+    key points, and extracted entities.
+    """
+    from fastapi.responses import StreamingResponse
+    from app.services.export_service import ExportService
+    import io
+
+    document = db.query(Document).filter(
+        Document.document_id == document_id,
+        Document.case_id == case_id
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID {document_id} not found in case {case_id}"
+        )
+
+    if not document.document_metadata or not document.document_metadata.get("analysis"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No analysis data available. Run analysis first."
+        )
+
+    export_service = ExportService()
+    docx_bytes = export_service.generate_docx(
+        filename=document.original_filename,
+        analysis=document.document_metadata.get("analysis", {}),
+        entities=document.document_metadata.get("entities", {}),
+        extraction=document.document_metadata.get("extraction", {})
+    )
+
+    # Create download filename
+    base_name = Path(document.original_filename).stem
+    download_name = f"{base_name}_analysis.docx"
+
+    return StreamingResponse(
+        io.BytesIO(docx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'}
+    )
+
+
+@router.get("/{document_id}/export/markdown")
+async def export_markdown(
+    case_id: UUID,
+    document_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    Export document analysis as Markdown
+
+    Generates a markdown file with summary, classification,
+    key points, and extracted entities.
+    """
+    from fastapi.responses import Response
+    from app.services.export_service import ExportService
+
+    document = db.query(Document).filter(
+        Document.document_id == document_id,
+        Document.case_id == case_id
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID {document_id} not found in case {case_id}"
+        )
+
+    if not document.document_metadata or not document.document_metadata.get("analysis"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No analysis data available. Run analysis first."
+        )
+
+    export_service = ExportService()
+    markdown_content = export_service.generate_markdown(
+        filename=document.original_filename,
+        analysis=document.document_metadata.get("analysis", {}),
+        entities=document.document_metadata.get("entities", {}),
+        extraction=document.document_metadata.get("extraction", {})
+    )
+
+    # Create download filename
+    base_name = Path(document.original_filename).stem
+    download_name = f"{base_name}_analysis.md"
+
+    return Response(
+        content=markdown_content,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'}
     )

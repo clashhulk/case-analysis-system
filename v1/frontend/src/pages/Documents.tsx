@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { documentsApi, casesApi } from '@/api/client';
-import type { DocumentAnalysis, AnalysisCostEstimate } from '@/types';
+import type { AnalysisCostEstimate } from '@/types';
 import {
   FileText,
   Upload,
@@ -14,9 +14,7 @@ import {
   CheckCircle,
   Clock,
   ArrowLeft,
-  Sparkles,
-  Users,
-  X
+  Sparkles
 } from 'lucide-react';
 
 const FILE_ICONS: Record<string, any> = {
@@ -67,8 +65,6 @@ export default function Documents() {
 
   // AI Analysis state
   const [analyzingDocs, setAnalyzingDocs] = useState<Set<string>>(new Set());
-  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
-  const [selectedAnalysis, setSelectedAnalysis] = useState<DocumentAnalysis | null>(null);
   const [showCostEstimate, setShowCostEstimate] = useState(false);
   const [costEstimate, setCostEstimate] = useState<AnalysisCostEstimate | null>(null);
 
@@ -170,18 +166,6 @@ export default function Documents() {
     } catch (error) {
       console.error('Failed to start bulk analysis:', error);
       alert('Failed to start analysis. Please try again.');
-    }
-  };
-
-  // View analysis results
-  const handleViewAnalysis = async (documentId: string) => {
-    try {
-      const analysis = await documentsApi.getAnalysis(caseId!, documentId);
-      setSelectedAnalysis(analysis);
-      setShowAnalysisModal(true);
-    } catch (error) {
-      console.error('Failed to fetch analysis:', error);
-      alert('Failed to load analysis results.');
     }
   };
 
@@ -586,7 +570,7 @@ export default function Documents() {
                         {/* View Analysis button for completed */}
                         {doc.status === 'analysis_complete' && (
                           <button
-                            onClick={() => handleViewAnalysis(doc.document_id)}
+                            onClick={() => navigate(`/cases/${caseId}/documents/${doc.document_id}`)}
                             className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm"
                           >
                             View Analysis
@@ -719,122 +703,6 @@ export default function Documents() {
         </div>
       )}
 
-      {/* Analysis Results Modal */}
-      {showAnalysisModal && selectedAnalysis && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-start mb-6">
-              <h2 className="text-2xl font-bold">Document Analysis</h2>
-              <button onClick={() => setShowAnalysisModal(false)} className="text-gray-500 hover:text-gray-700">
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            {/* Summary Section */}
-            {selectedAnalysis.analysis && (
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-blue-600" />
-                  Summary
-                </h3>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <p className="text-gray-700">{selectedAnalysis.analysis.summary}</p>
-                  <div className="mt-3 flex items-center gap-4">
-                    <span className="text-sm font-medium text-gray-600">Classification:</span>
-                    <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
-                      {selectedAnalysis.analysis.classification}
-                    </span>
-                    <span className="text-sm text-gray-500">
-                      Confidence: {(selectedAnalysis.analysis.confidence * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Key Points */}
-            {selectedAnalysis.analysis?.key_points && (
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-2">Key Points</h3>
-                <ul className="list-disc list-inside space-y-1 text-gray-700">
-                  {selectedAnalysis.analysis.key_points.map((point, idx) => (
-                    <li key={idx}>{point}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Entities Section */}
-            {selectedAnalysis.entities && (
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                  <Users className="h-5 w-5 text-purple-600" />
-                  Extracted Entities
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  {/* People */}
-                  {selectedAnalysis.entities.people && selectedAnalysis.entities.people.length > 0 && (
-                    <div className="bg-purple-50 p-3 rounded-lg">
-                      <h4 className="font-medium text-purple-900 mb-2">People</h4>
-                      {selectedAnalysis.entities.people.map((person, idx) => (
-                        <div key={idx} className="text-sm mb-1">
-                          <span className="font-medium">{person.name}</span>
-                          {person.role && <span className="text-gray-600"> - {person.role}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Dates */}
-                  {selectedAnalysis.entities.dates && selectedAnalysis.entities.dates.length > 0 && (
-                    <div className="bg-green-50 p-3 rounded-lg">
-                      <h4 className="font-medium text-green-900 mb-2">Dates</h4>
-                      {selectedAnalysis.entities.dates.map((date, idx) => (
-                        <div key={idx} className="text-sm">{date}</div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Locations */}
-                  {selectedAnalysis.entities.locations && selectedAnalysis.entities.locations.length > 0 && (
-                    <div className="bg-orange-50 p-3 rounded-lg">
-                      <h4 className="font-medium text-orange-900 mb-2">Locations</h4>
-                      {selectedAnalysis.entities.locations.map((loc, idx) => (
-                        <div key={idx} className="text-sm">{loc}</div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Case Numbers */}
-                  {selectedAnalysis.entities.case_numbers && selectedAnalysis.entities.case_numbers.length > 0 && (
-                    <div className="bg-blue-50 p-3 rounded-lg">
-                      <h4 className="font-medium text-blue-900 mb-2">Case Numbers</h4>
-                      {selectedAnalysis.entities.case_numbers.map((num, idx) => (
-                        <div key={idx} className="text-sm font-mono">{num}</div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Processing Info */}
-            {selectedAnalysis.processing && (
-              <div className="border-t pt-4">
-                <div className="flex items-center justify-between text-sm text-gray-600">
-                  <span>Processing Cost: ${selectedAnalysis.processing.total_cost_usd?.toFixed(3)}</span>
-                  {selectedAnalysis.processing.duration_ms && (
-                    <span>Duration: {(selectedAnalysis.processing.duration_ms / 1000).toFixed(1)}s</span>
-                  )}
-                  {selectedAnalysis.analysis && (
-                    <span>Model: {selectedAnalysis.analysis.model}</span>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

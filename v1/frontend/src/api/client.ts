@@ -6,7 +6,11 @@ import type {
   Document,
   DocumentUploadResponse,
   DocumentAnalysis,
-  AnalysisCostEstimate
+  AnalysisCostEstimate,
+  DocumentPreviewUrl,
+  AnalysisUpdateRequest,
+  Annotation,
+  AnnotationCreate
 } from '@/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -108,6 +112,57 @@ export const documentsApi = {
     const response = await api.post<AnalysisCostEstimate>(
       `/cases/${caseId}/documents/estimate-cost`,
       { document_ids: documentIds }
+    );
+    return response.data;
+  },
+
+  // Document Detail View methods
+  getPreviewUrl: async (caseId: string, documentId: string): Promise<DocumentPreviewUrl> => {
+    const response = await api.get<DocumentPreviewUrl>(
+      `/cases/${caseId}/documents/${documentId}/preview-url`
+    );
+    return response.data;
+  },
+
+  updateAnalysis: async (caseId: string, documentId: string, data: AnalysisUpdateRequest): Promise<DocumentAnalysis> => {
+    const response = await api.patch<DocumentAnalysis>(
+      `/cases/${caseId}/documents/${documentId}/analysis`,
+      data
+    );
+    return response.data;
+  },
+
+  getAnnotations: async (caseId: string, documentId: string): Promise<Annotation[]> => {
+    const response = await api.get<Annotation[]>(
+      `/cases/${caseId}/documents/${documentId}/annotations`
+    );
+    return response.data;
+  },
+
+  createAnnotation: async (caseId: string, documentId: string, data: AnnotationCreate): Promise<Annotation> => {
+    const response = await api.post<Annotation>(
+      `/cases/${caseId}/documents/${documentId}/annotations`,
+      data
+    );
+    return response.data;
+  },
+
+  deleteAnnotation: async (caseId: string, documentId: string, annotationId: string): Promise<void> => {
+    await api.delete(`/cases/${caseId}/documents/${documentId}/annotations/${annotationId}`);
+  },
+
+  exportDocx: async (caseId: string, documentId: string): Promise<Blob> => {
+    const response = await api.get(
+      `/cases/${caseId}/documents/${documentId}/export/docx`,
+      { responseType: 'blob' }
+    );
+    return response.data;
+  },
+
+  exportMarkdown: async (caseId: string, documentId: string): Promise<Blob> => {
+    const response = await api.get(
+      `/cases/${caseId}/documents/${documentId}/export/markdown`,
+      { responseType: 'blob' }
     );
     return response.data;
   },

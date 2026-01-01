@@ -123,3 +123,65 @@ class AnalysisCostEstimate(BaseModel):
     estimated_time_seconds: int = Field(..., description="Estimated processing time")
     within_budget: bool = Field(..., description="Whether operation is within daily budget")
     remaining_budget_usd: float = Field(..., description="Remaining daily budget in USD")
+
+
+# ============================================================================
+# Document Detail View Schemas
+# ============================================================================
+
+class DocumentPreviewUrl(BaseModel):
+    """Schema for document preview URL response"""
+    url: str = Field(..., description="Presigned S3 URL for document preview")
+    expires_at: datetime = Field(..., description="URL expiration timestamp")
+    file_type: str = Field(..., description="Document MIME type")
+    filename: str = Field(..., description="Original filename")
+
+
+class PersonEntity(BaseModel):
+    """Schema for a person entity"""
+    name: str = Field(..., description="Person's name")
+    role: str = Field(..., description="Role in the case (accused, victim, witness, judge, etc.)")
+    confidence: float = Field(default=1.0, description="Confidence score (1.0 for user edits)")
+
+
+class EntitiesUpdate(BaseModel):
+    """Schema for updating extracted entities"""
+    people: Optional[list[PersonEntity]] = Field(None, description="List of people entities")
+    dates: Optional[list[str]] = Field(None, description="List of dates")
+    locations: Optional[list[str]] = Field(None, description="List of locations")
+    case_numbers: Optional[list[str]] = Field(None, description="List of case numbers")
+    organizations: Optional[list[str]] = Field(None, description="List of organizations")
+
+
+class AnalysisUpdateRequest(BaseModel):
+    """Schema for updating document analysis (user corrections)"""
+    summary: Optional[str] = Field(None, description="Updated document summary")
+    classification: Optional[str] = Field(None, description="Updated document classification")
+    key_points: Optional[list[str]] = Field(None, description="Updated key points list")
+    entities: Optional[EntitiesUpdate] = Field(None, description="Updated entities")
+
+
+class AnnotationRect(BaseModel):
+    """Schema for annotation rectangle coordinates"""
+    x: float = Field(..., description="X coordinate (percentage of page width)")
+    y: float = Field(..., description="Y coordinate (percentage of page height)")
+    width: float = Field(..., description="Width (percentage of page width)")
+    height: float = Field(..., description="Height (percentage of page height)")
+
+
+class AnnotationCreate(BaseModel):
+    """Schema for creating a PDF annotation (highlight)"""
+    page: int = Field(..., ge=1, description="Page number (1-indexed)")
+    rects: list[AnnotationRect] = Field(..., description="List of highlight rectangles")
+    color: str = Field(default="yellow", description="Highlight color (yellow, green, blue, pink)")
+    text: Optional[str] = Field(None, description="Selected text content")
+
+
+class AnnotationResponse(BaseModel):
+    """Schema for annotation response"""
+    id: str = Field(..., description="Unique annotation ID")
+    page: int
+    rects: list[AnnotationRect]
+    color: str
+    text: Optional[str]
+    created_at: datetime
