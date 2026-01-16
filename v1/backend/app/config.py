@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     ai_daily_budget_usd: float = 100.0
     ai_max_retries: int = 3
 
+    # Vision AI (Claude Vision) - Fallback for poor quality documents
+    vision_ai_enabled: bool = True
+    vision_ai_quality_threshold: float = 0.5  # Use Vision AI if quality < 0.5
+    vision_ai_max_pages: int = 10  # Limit pages to control cost
+
     # Text Extraction
     tesseract_path: str = "/usr/bin/tesseract"  # Path to tesseract executable for OCR
     max_text_length: int = 100000  # Maximum characters to extract from documents
@@ -41,8 +46,8 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    # CORS - Define allowed origins in .env file
+    cors_origins: list[str] = []
 
     class Config:
         env_file = ".env"

@@ -442,7 +442,9 @@ Return ONLY a valid JSON object with no additional text."""
                     "classification": analysis_result["classification"],
                     "confidence": analysis_result["confidence"],
                     "key_points": analysis_result["key_points"],
-                    "model": analysis_result["model"]
+                    "model": analysis_result["model"],
+                    "cost_usd": analysis_result["cost_usd"],
+                    "tokens_used": analysis_result["tokens_used"]
                 },
                 "entities": {
                     "people": entities_result.get("people", []),
@@ -451,6 +453,8 @@ Return ONLY a valid JSON object with no additional text."""
                     "case_numbers": entities_result.get("case_numbers", []),
                     "organizations": entities_result.get("organizations", []),
                     "model": entities_result["model"],
+                    "cost_usd": entities_result["cost_usd"],
+                    "tokens_used": entities_result.get("tokens_used", 0),
                     "fallback_reason": entities_result.get("fallback_reason")  # Only present if fallback occurred
                 },
                 "total_cost": round(total_cost, 5),

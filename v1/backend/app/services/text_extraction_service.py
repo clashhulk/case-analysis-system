@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Optional
 import logging
 
+from app.config import get_settings
+
 try:
     import pdfplumber
 except ImportError:
@@ -266,6 +268,13 @@ class TextExtractionService:
         quality_score = self.assess_quality(result["text"])
         result["quality_score"] = quality_score
 
+        # Check if Vision AI fallback is needed
+        settings = get_settings()
+        result["needs_vision_fallback"] = (
+            settings.vision_ai_enabled and
+            quality_score < settings.vision_ai_quality_threshold
+        )
+
         # Add extraction timestamp
         from datetime import datetime
         result["extracted_at"] = datetime.utcnow().isoformat()
@@ -274,7 +283,8 @@ class TextExtractionService:
             f"Text extraction complete: {file_path} | "
             f"Method: {result['method']} | "
             f"Length: {result['text_length']} | "
-            f"Quality: {quality_score}"
+            f"Quality: {quality_score} | "
+            f"Vision fallback: {result['needs_vision_fallback']}"
         )
 
         return result

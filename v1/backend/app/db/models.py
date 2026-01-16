@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, BigInteger, Text, Integer, ForeignKey
+from sqlalchemy import Column, String, DateTime, BigInteger, Text, Integer, ForeignKey, Numeric, Boolean
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 import uuid
@@ -48,3 +48,22 @@ class Document(Base):
     document_metadata = Column(JSONB)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AICostTracking(Base):
+    """AI Cost Tracking - tracks all AI service usage and costs"""
+    __tablename__ = "ai_cost_tracking"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.document_id", ondelete="SET NULL"), nullable=True, index=True)
+    case_id = Column(UUID(as_uuid=True), ForeignKey("cases.case_id", ondelete="SET NULL"), nullable=True, index=True)
+    service_type = Column(String(50), nullable=False, index=True)  # 'text_analysis', 'entity_extraction', 'vision_ai'
+    model_name = Column(String(100), nullable=False)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    cost_usd = Column(Numeric(10, 6), nullable=False)
+    duration_ms = Column(Integer, nullable=True)
+    success = Column(Boolean, nullable=False, default=True)
+    error_message = Column(Text, nullable=True)
+    extra_data = Column(JSONB, nullable=True)  # Renamed from 'metadata' (reserved by SQLAlchemy)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)

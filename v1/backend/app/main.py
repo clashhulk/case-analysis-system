@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
-from app.api import cases, documents
+from app.api import cases, documents, admin
 
 settings = get_settings()
 
@@ -27,6 +27,7 @@ app.include_router(
     prefix="/api/v1/cases/{case_id}/documents",
     tags=["documents"]
 )
+app.include_router(admin.router)
 
 
 @app.get("/")

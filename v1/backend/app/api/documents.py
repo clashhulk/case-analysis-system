@@ -314,7 +314,13 @@ async def process_document_background(
     5. Store results in document_metadata
     6. Emit events at each stage
     """
-    from app.services import get_s3_service, get_text_extraction_service, get_ai_service
+    from app.services import (
+        get_s3_service,
+        get_text_extraction_service,
+        get_ai_service,
+        get_vision_ai_service
+    )
+    from app.services.cost_tracking_service import get_cost_tracking_service
     from app.domain.events import (
         DocumentTextExtractedEvent,
         DocumentAnalyzedEvent,
@@ -366,33 +372,89 @@ async def process_document_background(
         db_session.add(event)
         db_session.commit()
 
-        # 3. Quality check
-        if extraction_result["quality_score"] < 0.5:
-            document.status = "poor_quality"
-            document.document_metadata = {
-                "extraction": extraction_result,
-                "processing": {
-                    "started_at": datetime.utcnow().isoformat(),
-                    "completed_at": datetime.utcnow().isoformat(),
-                    "error": "Text quality too low for analysis"
-                }
-            }
-
-            # Create failure event
-            event = Event(
-                aggregate_type="document",
-                aggregate_id=document_id,
-                event_type="DocumentAnalysisFailed",
-                event_data={
-                    "case_id": str(case_id),
-                    "error_type": "quality_too_low",
-                    "error_message": f"Quality score {extraction_result['quality_score']} below threshold"
-                },
-                event_metadata={"source": "ai_processing"}
+        # 3. Quality check and Vision AI fallback
+        if extraction_result.get("needs_vision_fallback", False):
+            logger.info(
+                f"Poor text quality ({extraction_result['quality_score']}), "
+                f"attempting Vision AI fallback for document {document_id}"
             )
-            db_session.add(event)
-            db_session.commit()
-            return
+
+            try:
+                vision_service = get_vision_ai_service()
+                vision_result = vision_service.analyze_document(
+                    tmp_path,
+                    document_type="legal"
+                )
+
+                if vision_result.get("success") and vision_result.get("text"):
+                    # Vision AI succeeded - use its results
+                    logger.info(
+                        f"Vision AI extraction successful: {vision_result['text_length']} chars, "
+                        f"cost: ${vision_result['metadata'].get('cost_usd', 0):.4f}"
+                    )
+                    # Normalize vision_result structure to match text extraction format
+                    extraction_result = {
+                        "text": vision_result["text"],
+                        "text_length": vision_result["text_length"],
+                        "method": vision_result["method"],
+                        "quality_score": vision_result["metadata"].get("confidence", 0.8),
+                        "extracted_at": vision_result.get("extracted_at", datetime.utcnow().isoformat()),
+                        "metadata": vision_result.get("metadata", {})
+                    }
+
+                    # Track Vision AI cost
+                    try:
+                        cost_tracker = get_cost_tracking_service()
+                        cost_tracker.track_cost(
+                            db=db_session,
+                            service_type="vision_ai",
+                            model_name=vision_result["metadata"].get("model", "claude-vision"),
+                            cost_usd=vision_result["metadata"].get("cost_usd", 0),
+                            document_id=document_id,
+                            case_id=case_id,
+                            input_tokens=vision_result["metadata"].get("input_tokens"),
+                            output_tokens=vision_result["metadata"].get("output_tokens"),
+                            duration_ms=vision_result["metadata"].get("duration_ms"),
+                            success=True,
+                            extra_data={"pages_processed": vision_result["metadata"].get("pages_processed")}
+                        )
+                    except Exception as track_error:
+                        logger.error(f"Failed to track Vision AI cost: {str(track_error)}")
+                else:
+                    # Vision AI failed - mark as poor quality
+                    raise Exception(vision_result.get("error", "Vision AI extraction failed"))
+
+            except Exception as vision_error:
+                logger.warning(f"Vision AI fallback failed: {str(vision_error)}")
+
+                # Mark document as poor quality
+                document.status = "poor_quality"
+                document.document_metadata = {
+                    "extraction": extraction_result,
+                    "vision_fallback_attempted": True,
+                    "vision_fallback_error": str(vision_error),
+                    "processing": {
+                        "started_at": datetime.utcnow().isoformat(),
+                        "completed_at": datetime.utcnow().isoformat(),
+                        "error": "Text quality too low and Vision AI fallback failed"
+                    }
+                }
+
+                # Create failure event
+                event = Event(
+                    aggregate_type="document",
+                    aggregate_id=document_id,
+                    event_type="DocumentAnalysisFailed",
+                    event_data={
+                        "case_id": str(case_id),
+                        "error_type": "quality_too_low",
+                        "error_message": f"Quality score {extraction_result['quality_score']} below threshold, Vision AI failed"
+                    },
+                    event_metadata={"source": "ai_processing"}
+                )
+                db_session.add(event)
+                db_session.commit()
+                return
 
         # 4. AI Analysis
         started_at = datetime.utcnow()
@@ -401,6 +463,41 @@ async def process_document_background(
             document.file_type
         )
         completed_at = datetime.utcnow()
+
+        # Track AI costs
+        try:
+            cost_tracker = get_cost_tracking_service()
+
+            # Track Claude analysis cost
+            if "analysis" in analysis_result and "cost_usd" in analysis_result["analysis"]:
+                cost_tracker.track_cost(
+                    db=db_session,
+                    service_type="text_analysis",
+                    model_name=analysis_result["analysis"].get("model", "claude"),
+                    cost_usd=analysis_result["analysis"]["cost_usd"],
+                    document_id=document_id,
+                    case_id=case_id,
+                    input_tokens=analysis_result["analysis"].get("tokens_used"),
+                    output_tokens=None,
+                    duration_ms=int((completed_at - started_at).total_seconds() * 1000),
+                    success=True
+                )
+
+            # Track GPT-4 entity extraction cost
+            if "entities" in analysis_result and "cost_usd" in analysis_result["entities"]:
+                cost_tracker.track_cost(
+                    db=db_session,
+                    service_type="entity_extraction",
+                    model_name=analysis_result["entities"].get("model", "gpt-4"),
+                    cost_usd=analysis_result["entities"]["cost_usd"],
+                    document_id=document_id,
+                    case_id=case_id,
+                    input_tokens=analysis_result["entities"].get("tokens_used"),
+                    output_tokens=None,
+                    success=True
+                )
+        except Exception as track_error:
+            logger.error(f"Failed to track AI costs: {str(track_error)}")
 
         # 5. Store results
         document.document_metadata = {

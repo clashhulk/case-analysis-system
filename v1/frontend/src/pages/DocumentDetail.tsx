@@ -909,10 +909,6 @@ export default function DocumentDetail() {
                       <span> ({(analysis.processing.duration_ms / 1000).toFixed(1)}s)</span>
                     )}
                   </p>
-                  {analysis.processing.total_cost_usd && (
-                    <p>Cost: ${analysis.processing.total_cost_usd.toFixed(4)}</p>
-                  )}
-                  {analysis.analysis.model && <p>Model: {analysis.analysis.model}</p>}
                 </div>
               )}
             </div>
