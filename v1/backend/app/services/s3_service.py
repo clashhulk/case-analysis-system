@@ -130,6 +130,12 @@ class S3Service:
                 Params={'Bucket': self.bucket_name, 'Key': s3_key},
                 ExpiresIn=expiration
             )
+
+            # Replace internal endpoint with external endpoint for browser access
+            if settings.s3_external_endpoint:
+                url = url.replace(settings.s3_endpoint, settings.s3_external_endpoint)
+                logger.debug(f"Replaced internal endpoint with external: {url}")
+
             return url
         except ClientError as e:
             logger.error(f"Error generating presigned URL: {e}")

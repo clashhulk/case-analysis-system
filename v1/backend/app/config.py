@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     # MinIO / S3
     s3_endpoint: str = "http://minio:9000"
+    s3_external_endpoint: str = ""  # Public-facing endpoint for presigned URLs (e.g., http://1.2.3.4:9000)
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_bucket_name: str = "case-documents"
